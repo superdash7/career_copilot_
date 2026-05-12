@@ -2,8 +2,12 @@
 REST API для AI Career Pathfinder (для подключения отдельного фронтенда).
 Запуск: uvicorn api:app --reload --host 127.0.0.1 --port 8000
 
-Шаг 4: добавлены auth-эндпоинты (register/login/refresh/logout/me),
-        онбординг, история анализов, прогресс навыков, публичный share.
+Шаг 5: улучшения существующих эндпоинтов:
+  - /api/analyze-resume: confidence-оценка навыков, alternatives, evidence
+  - /api/skills-by-category: новый эндпоинт для ручного выбора навыков
+  - /api/plan: параллельный _build_role_matches (ThreadPoolExecutor),
+               EXPLORE_SKIP_SECOND_RANK, улучшенный _build_explore_analysis
+  - /api/focused-plan: валидация кол-ва навыков для explore, делегирование в PlanGenerator
 """
 
 import os
@@ -29,12 +33,12 @@ import json
 import jwt
 import bcrypt
 
-# Инициализация модулей (как в main)
 from data_loader import DataLoader
 from resume_parser import ResumeParser
 from gap_analyzer import GapAnalyzer
 from scenario_handler import ScenarioHandler
 from output_formatter import OutputFormatter
+from confidence_utils import get_skill_confidence
 from db import get_db_connection, init_db
 from config import Config
 from rate_limiter import check_rate_limit_or_raise
@@ -93,7 +97,7 @@ app.add_middleware(
 
 
 # ---------------------------------------------------------------------------
-# Auth helpers
+# Auth helpers (без изменений относительно шага 4)
 # ---------------------------------------------------------------------------
 
 def _utc_now_iso() -> str:
@@ -222,7 +226,7 @@ def _get_current_user(
 
 
 # ---------------------------------------------------------------------------
-# Auth request/response models
+# Auth models & endpoints (без изменений относительно шага 4)
 # ---------------------------------------------------------------------------
 
 class RegisterRequest(BaseModel):
@@ -294,10 +298,6 @@ def _recommend_scenario_from_pain_point(pain_point: str) -> str:
     }
     return mapping.get((pain_point or "").strip().lower(), "Исследование возможностей")
 
-
-# ---------------------------------------------------------------------------
-# Auth endpoints
-# ---------------------------------------------------------------------------
 
 @app.post("/api/auth/register")
 def register(req: RegisterRequest):
@@ -403,16 +403,8 @@ def me(current_user: Dict[str, Any] = Depends(_get_current_user)):
     return {"user": current_user}
 
 
-# ---------------------------------------------------------------------------
-# Share endpoint (public read-only)
-# ---------------------------------------------------------------------------
-
 @app.get("/api/share/{analysis_id}")
 def get_shared_analysis(analysis_id: str):
-    """
-    Публичный read-only доступ к результату анализа по его ID.
-    Используется для шаринга карточки результата.
-    """
     with get_db_connection() as conn:
         row = conn.execute(
             "SELECT id, scenario, current_role, target_role, result_json, created_at "
@@ -446,10 +438,6 @@ def get_shared_analysis(analysis_id: str):
     return out
 
 
-# ---------------------------------------------------------------------------
-# Onboarding
-# ---------------------------------------------------------------------------
-
 @app.patch("/api/auth/onboarding")
 def save_onboarding(
     req: OnboardingRequest,
@@ -481,10 +469,6 @@ def save_onboarding(
         "recommended_scenario": _recommend_scenario_from_pain_point(pain_point),
     }
 
-
-# ---------------------------------------------------------------------------
-# Analyses (history)
-# ---------------------------------------------------------------------------
 
 @app.get("/api/analyses")
 def get_analyses(current_user: Dict[str, Any] = Depends(_get_current_user)):
@@ -542,10 +526,6 @@ def get_analysis_detail(
         raise HTTPException(status_code=404, detail="Анализ не найден")
     return {"item": _serialize_analysis_row(row)}
 
-
-# ---------------------------------------------------------------------------
-# Progress tracking
-# ---------------------------------------------------------------------------
 
 @app.get("/api/progress")
 def get_progress(current_user: Dict[str, Any] = Depends(_get_current_user)):
@@ -615,7 +595,7 @@ def patch_progress(
 
 
 # ---------------------------------------------------------------------------
-# Existing endpoints (unchanged from v1)
+# Core endpoints — IMPROVED in this step
 # ---------------------------------------------------------------------------
 
 @app.get("/api/professions")
@@ -633,6 +613,21 @@ def get_skills_for_role(profession: str):
     if not profession:
         return {"skills": []}
     return {"skills": data.get_skills_for_role(profession)}
+
+
+@app.get("/api/skills-by-category")
+def get_skills_by_category(profession: str):
+    """
+    Навыки с разбивкой по категориям для ручного выбора.
+    Возвращает: {"categories": [{"name": str, "skills": [str, ...]}, ...]}
+    """
+    if not profession:
+        return {"categories": []}
+    try:
+        categories = data.get_skills_by_category_for_role(profession)
+        return {"categories": categories}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/suggest-skills")
@@ -661,7 +656,11 @@ def suggest_skills(q: str = ""):
 
 @app.post("/api/analyze-resume")
 async def analyze_resume(file: UploadFile = File(...)):
-    """Загрузка PDF, извлечение навыков. Возвращает список [{name, level}]."""
+    """
+    Загрузка PDF, извлечение навыков.
+    Возвращает список [{raw_name, name, level, confidence, confidence_band, alternatives, evidence}].
+    УЛУЧШЕНИЕ: добавлены confidence-оценка, alternatives и evidence для каждого навыка.
+    """
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Нужен PDF файл")
     if not parser.client:
@@ -674,19 +673,54 @@ async def analyze_resume(file: UploadFile = File(...)):
             text = parser.extract_text(tmp)
             if not text or not text.strip():
                 return {"skills": [], "error": "Не удалось извлечь текст из PDF"}
-            skills_list = list(data.skills_map.keys())
-            result = parser.parse_skills(text, skills_list)
-            try:
-                from rag_service import map_to_canonical_skill
-                for s in result.get("skills", []):
-                    can = map_to_canonical_skill(s.get("name") or "")
-                    if can:
-                        s["name"] = can
-            except Exception:
-                pass
-            level_mapping = {1: 1, 2: 1.5, 3: 2}
-            out = [{"name": s.get("name", ""), "level": level_mapping.get(s.get("level"), 1)} for s in result.get("skills", [])]
-            return {"skills": out}
+            skills_dicts = data.skills
+            result = parser.parse_skills(text, skills_dicts)
+
+            level_mapping = {0: 0, 1: 1, 2: 1.5, 3: 2}
+
+            out = []
+            for s in result.get("skills", []):
+                raw_name = (s.get("raw_name") or s.get("name") or "").strip()
+                name = (s.get("name") or "").strip()
+                if not name:
+                    continue
+
+                confidence, band = get_skill_confidence(s)
+                alternatives = []
+
+                cands = s.get("candidates") or []
+                for c in cands[:3]:
+                    cname = (c.get("name") or "").strip()
+                    cscore = c.get("score")
+                    if not cname:
+                        continue
+                    try:
+                        cscore = float(cscore) if cscore is not None else None
+                    except Exception:
+                        cscore = None
+                    alternatives.append({"name": cname, "score": cscore})
+
+                out.append(
+                    {
+                        "raw_name": raw_name,
+                        "name": name,
+                        "level": level_mapping.get(s.get("level"), 1),
+                        "confidence": confidence,
+                        "confidence_band": band,
+                        "alternatives": alternatives,
+                        "evidence": s.get("evidence", ""),
+                        "resume_evidence_span": s.get("resume_evidence_span", ""),
+                        "source_skill_id": s.get("source_skill_id"),
+                        "retrieval_mode": s.get("retrieval_mode"),
+                        "retrieval_trace": s.get("retrieval_trace", {}),
+                    }
+                )
+
+            return {
+                "skills": out,
+                "used_fallback": bool(result.get("used_fallback", False)),
+                "version": "v2",
+            }
         finally:
             if tmp.exists():
                 tmp.unlink(missing_ok=True)
@@ -754,22 +788,30 @@ def _dedupe_opportunities(opportunities):
 
 
 def _build_role_matches(opps, user_skills):
+    """Строит RoleMatch для explore; RAG why_match запрашивается параллельно."""
+    from concurrent.futures import ThreadPoolExecutor
     from explore_recommendations import RoleMatch
     try:
         from rag_service import get_rag_why_role_bullets
     except Exception:
         get_rag_why_role_bullets = lambda u, r, **kw: []
-    matches = []
-    for opp in opps:
+
+    def _one(opp: Dict[str, Any]) -> RoleMatch:
         role_title = opp.get("role", "")
         internal = opp.get("internal_role")
         reqs = data.get_role_requirements(internal, "Middle") if internal else {}
         skill_keys = [k for k in reqs.keys() if k not in data.atlas_map]
-        matched = [{"name": s} for s in user_skills if s in reqs][:5]
-        missing = [{"name": s} for s in skill_keys if s not in user_skills][:3]
-        why = get_rag_why_role_bullets(user_skills, role_title, top_k=5)
+        matched = [
+            {"name": s}
+            for s in skill_keys
+            if user_skills.get(s, 0) >= reqs.get(s, 0)
+        ][:5]
+        missing = [{"name": s} for s in skill_keys if user_skills.get(s, 0) < reqs.get(s, 0)]
+        why = get_rag_why_role_bullets(
+            user_skills, role_title, top_k=5, atlas_keys=set(data.atlas_map.keys())
+        )
         score = (opp.get("match", 0) or 0) / 100.0
-        matches.append(RoleMatch(
+        return RoleMatch(
             role_title=role_title,
             match_score=score,
             why_match=why,
@@ -777,8 +819,13 @@ def _build_role_matches(opps, user_skills):
             key_skills=skill_keys[:8],
             missing_skills=missing,
             internal_role=internal,
-        ))
-    return matches
+        )
+
+    if not opps:
+        return []
+    max_workers = min(2, max(1, len(opps)))
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        return list(pool.map(_one, opps))
 
 
 def _build_growth_analysis(structured, current_grade, target_grade):
@@ -836,12 +883,16 @@ def _build_switch_analysis(switch_vm, from_role, to_role):
 
 
 def _build_explore_analysis(view_model):
+    """УЛУЧШЕНИЕ: добавлено поле summary для каждой роли."""
     def card_to_dict(c, category):
+        summary = ". ".join(c.reasons[:3]).strip()
+        summary = summary[:220]
         return {
             "title": c.title, "match": round(c.match_score * 100),
             "category": category, "match_label": c.match_label,
-            "missing": c.add_skills[:5], "key_skills": c.key_skills[:8],
+            "missing": c.missing_skills, "key_skills": c.key_skills[:8],
             "reasons": c.reasons[:5],
+            "summary": summary,
         }
     roles = []
     for c in view_model.closest:
@@ -914,11 +965,18 @@ def build_plan_api(req: PlanRequest):
 
         else:
             opps = scenarios.explore_opportunities(user_skills)
-            try:
-                from rag_service import rank_opportunities
-                opps = rank_opportunities(user_skills, opps, data)
-            except Exception:
-                pass
+            # УЛУЧШЕНИЕ: semantic_score уже посчитан в explore_opportunities;
+            # повторный rank — лишняя загрузка MiniLM, пропускаем по умолчанию
+            if not getattr(Config, "EXPLORE_SKIP_SECOND_RANK", True):
+                try:
+                    from rag_service import rank_opportunities
+                    opps = rank_opportunities(user_skills, opps, data)
+                except Exception:
+                    pass
+            else:
+                opps.sort(
+                    key=lambda x: (-x.get("semantic_score", 0), -x.get("match", 0), x.get("role", ""))
+                )
             opps = _dedupe_opportunities(opps)
             matches = _build_role_matches(opps, user_skills)
             from explore_recommendations import build_explore_recommendations
@@ -947,9 +1005,21 @@ class FocusedPlanRequest(BaseModel):
 
 @app.post("/api/focused-plan")
 def focused_plan_api(req: FocusedPlanRequest):
-    """Генерирует фокусный план по выбранным навыкам. Возвращает {tasks, communication, learning}."""
+    """
+    Генерирует фокусный план по выбранным навыкам.
+    УЛУЧШЕНИЕ: валидация кол-ва навыков для explore, делегирование в PlanGenerator.
+    """
     if not req.selected_skills:
         raise HTTPException(status_code=400, detail="Выберите хотя бы один навык")
+    if req.scenario == "Исследование возможностей":
+        n = len(req.selected_skills)
+        lo = Config.EXPLORE_PLAN_MIN_SELECTED_SKILLS
+        hi = Config.EXPLORE_PLAN_MAX_SELECTED_SKILLS
+        if n < lo or n > hi:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Для плана выберите от {lo} до {hi} навыков",
+            )
 
     grade_key = GRADE_MAP.get(req.grade, "Middle")
     grade_sequence = ["Junior", "Middle", "Senior", "Lead", "Expert"]
@@ -957,7 +1027,12 @@ def focused_plan_api(req: FocusedPlanRequest):
     target_grade = grade_sequence[min(idx + 1, len(grade_sequence) - 1)]
 
     skill_details = []
-    for name in req.selected_skills[:10]:
+    if req.scenario == "Исследование возможностей":
+        cap = Config.EXPLORE_PLAN_MAX_SELECTED_SKILLS
+        selected_skills = req.selected_skills[:cap]
+    else:
+        selected_skills = req.selected_skills[:10]
+    for name in selected_skills:
         detail = data.get_skill_detail(name, target_grade)
         if detail:
             skill_details.append(detail)
@@ -983,56 +1058,14 @@ def focused_plan_api(req: FocusedPlanRequest):
         skill_context += block + "\n\n"
 
     target = req.target_profession or req.profession
-    prompt = f"""Пользователь выбрал навыки для развития: {', '.join(req.selected_skills)}.
-Профессия: {req.profession}, грейд: {req.grade}, цель: {target}, сценарий: {req.scenario}.
-
-Данные по навыкам:
-{skill_context}
-
-Сгенерируй РОВНО три JSON-блока. Отвечай ТОЛЬКО валидным JSON без markdown.
-
-{{
-  "tasks": [
-    {{"skill": "название навыка", "items": ["конкретная задача 1", "конкретная задача 2"]}}
-  ],
-  "communication": ["рекомендация по развитию через общение 1", "рекомендация 2", "рекомендация 3"],
-  "learning": ["конкретная книга/курс/ресурс 1", "ресурс 2", "ресурс 3"]
-}}
-
-Правила:
-- tasks: для КАЖДОГО выбранного навыка 2-3 конкретные задачи, опираясь на данные выше
-- communication: 3-5 рекомендаций по менторству, code review, обратной связи
-- learning: 3-5 конкретных книг, курсов или ресурсов на русском или английском
-- Отвечай на русском
-- Только JSON, без пояснений"""
-
-    import json as _json
-    last_error = None
-    for attempt in range(3):
-        try:
-            response = gen.client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": "Отвечай только валидным JSON. Без markdown, без пояснений."},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.3,
-                max_tokens=2000,
-                response_format={"type": "json_object"},
-            )
-            result = _json.loads(response.choices[0].message.content)
-            if "tasks" not in result:
-                result["tasks"] = []
-            if "communication" not in result:
-                result["communication"] = []
-            if "learning" not in result:
-                result["learning"] = []
-            return result
-        except Exception as e:
-            last_error = e
-            import time; time.sleep(1)
-
-    raise HTTPException(status_code=500, detail=f"Ошибка генерации: {last_error}")
+    return gen.generate_focused_plan_json(
+        selected_skills=selected_skills,
+        profession=req.profession,
+        grade=req.grade,
+        scenario=req.scenario,
+        target_name=target,
+        skill_context=skill_context,
+    )
 
 
 @app.get("/health")
