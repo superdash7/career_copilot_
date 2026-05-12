@@ -1,0 +1,20 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+gradio>=4.44,<5
+openai>=1.0,<2
+pypdf>=3.0
+python-dotenv>=1.0
+pandas>=2.0
+pymorphy3>=2.0
+sentence-transformers>=2.2.0,<3.0
+transformers>=4.40
+scikit-learn>=1.0
+fastapi>=0.100
+uvicorn>=0.22
+rapidfuzz
+tiktoken>=0.5.0
+matplotlib
+rouge-score
+bcrypt
+PyJWT
+email-validator

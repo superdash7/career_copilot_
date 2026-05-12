@@ -1,0 +1,14 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      # Volume must not mount over /app/data (ships clean_skills.json etc.)
+      - DB_PATH=/data/app.db
+    volumes:
+      - career_copilot_data:/data
+
+volumes:
+  career_copilot_data:
