@@ -1,4 +1,4 @@
-# Career Copilot 
+# Career Copilot — AI Career Pathfinder
 
 <div align="center">
 
@@ -10,530 +10,536 @@
 
 ---
 
-# Описание решения
+## Что это
 
-## 1. Общая архитектура
+Career Copilot — веб-приложение, которое помогает специалистам построить индивидуальный план карьерного развития. Система сопоставляет текущие навыки пользователя с требованиями целевой роли, определяет зоны роста и генерирует конкретные шаги по модели 70/20/10 (практика / менторство / обучение).
 
-Career Copilot — веб-приложение для построения персонализированных планов карьерного развития. Система объединяет NLP-нормализацию, семантический поиск через эмбеддинги, gap-анализ по формальной модели и генеративный ИИ для формирования рекомендаций.
+### Три сценария
 
-### 1.1. Архитектурная схема
+| Сценарий | Что делает |
+|----------|------------|
+| **Следующий грейд** | Показывает, что нужно для перехода Junior → Middle → Senior → Lead → Expert в текущей роли |
+| **Смена профессии** | Сравнивает навыки с требованиями новой роли, находит пересечения и пробелы |
+| **Исследование возможностей** | Ранжирует все доступные роли по совпадению с профилем пользователя |
+
+### Как это работает
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        Клиент (браузер)                            │
-│  React 19 + TypeScript + Tailwind CSS 4 + Recharts                 │
-│                                                                     │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ │
-│  │ Welcome  │→│ GoalSetup│→│  Skills  │→│ Confirm  │→│  Result  │ │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘ │
-│                                                        │           │
-│                                           ┌────────────▼────────┐  │
-│                                           │   Focused Plan UI   │  │
-│                                           │  (выбор → генерация)│  │
-│                                           └─────────────────────┘  │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │ HTTP JSON / multipart
-┌──────────────────────────────▼──────────────────────────────────────┐
-│                       FastAPI (api.py)                              │
-│                                                                     │
-│  GET /api/professions          POST /api/plan                       │
-│  GET /api/skills-for-role      POST /api/focused-plan               │
-│  GET /api/suggest-skills       POST /api/analyze-resume             │
-│  GET /health                                                        │
-├─────────────────────────────────────────────────────────────────────┤
-│                    Слой обработки данных                            │
-│                                                                     │
-│  ┌────────────────┐  ┌─────────────────┐  ┌──────────────────────┐ │
-│  │ skill_         │  │ gap_analyzer    │  │ scenario_handler     │ │
-│  │ normalizer     │  │ (семантический  │  │ (next_grade /        │ │
-│  │ (лемматизация  │  │  мэтчинг +     │  │  switch / explore)   │ │
-│  │  + синонимы)   │  │  gap-расчет)   │  │                      │ │
-│  └───────┬────────┘  └───────┬─────────┘  └──────────┬───────────┘ │
-│          │                   │                       │             │
-│  ┌───────▼───────────────────▼───────────────────────▼───────────┐ │
-│  │                    rag_service                                 │ │
-│  │  Sentence-Transformers (MiniLM-L12-v2, 384d)                  │ │
-│  │  semantic_match_skills() — попарный мэтчинг                   │ │
-│  │  compute_profile_similarity() — профильный эмбеддинг           │ │
-│  │  retrieve() — векторный поиск по Qdrant                       │ │
-│  └───────────────────────────────────────────────────────────────┘ │
-│                                                                     │
-│  ┌────────────────┐  ┌─────────────────┐  ┌──────────────────────┐ │
-│  │ data_loader    │  │ output_         │  │ plan_generator       │ │
-│  │ (JSON → dict)  │  │ formatter       │  │ (GPT-4o)             │ │
-│  └────────────────┘  └─────────────────┘  └──────────────────────┘ │
-├─────────────────────────────────────────────────────────────────────┤
-│                    Внешние сервисы                                  │
-│  OpenAI API (GPT-4o)              Qdrant Cloud (векторная БД)      │
-├─────────────────────────────────────────────────────────────────────┤
-│                    Данные                                           │
-│  clean_skills.json (~6900 навыков) │ atlas_params_clean.json (7 п.) │
-│  skill_synonyms.json (словарь)    │ skill_clusters.json (кластеры) │
-└─────────────────────────────────────────────────────────────────────┘
+┌─ Пользователь ──────────────────────────────────────────────┐
+│                                                              │
+│  1. Выбирает профессию и сценарий                           │
+│  2. Добавляет навыки (из резюме PDF или вручную)            │
+│  3. Получает персональный план развития                      │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌─ Backend Pipeline ──────────────────────────────────────────┐
+│                                                              │
+│  Нормализация навыков (pymorphy3 + синонимы)                │
+│       ↓                                                      │
+│  Подбор требований роли из справочника                       │
+│       ↓                                                      │
+│  Gap-анализ: текущий уровень vs требуемый                   │
+│       ↓                                                      │
+│  Обогащение контекстом через RAG (Qdrant)                   │
+│       ↓                                                      │
+│  Генерация плана через GPT-4o (модель 70/20/10)             │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
 ```
-
-### 1.2. Стек технологий
-
-| Слой | Технологии |
-|---|---|
-| Фронтенд | React 19, TypeScript 5.9, Vite 7, Tailwind CSS 4, Recharts, Lucide React |
-| Бэкенд | Python 3.12, FastAPI, Uvicorn, Pydantic v2 |
-| NLP | pymorphy3 (лемматизация RU), NLTK Snowball (стемминг EN), Sentence-Transformers |
-| Эмбеддинги | paraphrase-multilingual-MiniLM-L12-v2 (384 измерения) |
-| Векторная БД | Qdrant Cloud (REST API, косинусная метрика) |
-| Генеративный ИИ | OpenAI GPT-4o (temperature 0.3, JSON response format) |
-| Инфраструктура | Docker (multi-stage build), Railway |
 
 ---
 
-## 2. Пайплайн обработки данных
-
-### 2.1. Полный пайплайн запроса
+## Архитектура
 
 ```
-Пользовательский ввод
-        │
-        ▼
-┌─────────────────────┐
-│ 1. Нормализация     │  skill_normalizer → resolve_to_canonical()
-│    навыков           │  api.py → _skills_table_to_user_skills()
-│                      │  0/0.5→Basic(1), 1/1.5→Proficiency(2), 2→Advanced(3)
-└──────────┬──────────┘
-           ▼
-┌─────────────────────┐
-│ 2. Инъекция атлас-  │  api.py: atlas params ← GRADE_TO_PARAM_ORDINAL[grade]
-│    параметров        │  Младший=1, Специалист=2, Старший=3, Ведущий=4, Эксперт=5
-└──────────┬──────────┘
-           ▼
-┌─────────────────────┐
-│ 3. Загрузка         │  scenario_handler → data_loader.get_role_requirements()
-│    требований роли   │  Навыки: GRADE_TO_SKILL_LEVEL[target_grade]
-│                      │  Параметры: GRADE_TO_PARAM_ORDINAL[target_grade]
-└──────────┬──────────┘
-           ▼
-┌─────────────────────┐
-│ 4. Семантический    │  rag_service.semantic_match_skills()
-│    мэтчинг           │  Эмбеддинги: encode() → cosine similarity matrix
-│                      │   1:1 маппинг, порог ≥ 0.72
-└──────────┬──────────┘
-           ▼
-┌─────────────────────┐
-│ 5. Gap-анализ       │  gap_analyzer.analyze_structured()
-│                      │  delta = required - current
-│                      │  Сортировка по delta ↓
-│                      │  match% = strong / total × 100
-└──────────┬──────────┘
-           ▼
-┌─────────────────────┐
-│ 6. Формирование     │  output_formatter → markdown
-│    диагностики       │  api.py → structured analysis JSON
-└──────────┬──────────┘
-           ▼
-┌─────────────────────┐
-│ 7. Генерация плана  │  /api/focused-plan
-│    (по выбору)       │  GPT-4o: JSON {tasks, communication, learning}
-└─────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                         КЛИЕНТ (Браузер)                               │
+│                                                                        │
+│   React 19 · TypeScript 5.9 · Tailwind CSS 4 · Vite 7 · Recharts      │
+│                                                                        │
+│   PublicLanding · Auth · Onboarding · Dashboard                        │
+│   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────┐   │
+│   │ GoalSetup│→ │  Skills  │→ │ Confirm  │→ │ Result   │ (+ Growth/   │
+│   └──────────┘  └──────────┘  └──────────┘  └──────────┘  Switch UI)   │
+│        ↑              ↑             ↑              ↑            ↑     │
+│        └──────── History API (browser back/forward) ────────────┘     │
+│                  sessionStorage (persist on refresh)                    │
+│                                                                        │
+│   AuthContext (JWT) · ProtectedRoute · ShareCard                       │
+│   Компоненты: SearchableSelect · SkillCard · ScenarioCard · Toast    │
+│               Stepper · Skeleton · ErrorBoundary · FeedbackRating     │
+│                                                                        │
+└────────────────────────────┬───────────────────────────────────────────┘
+                             │
+                             │  HTTP (JSON / multipart)
+                             │  AbortController для отмены запросов
+                             │
+┌────────────────────────────▼───────────────────────────────────────────┐
+│                      FastAPI (api.py)                                   │
+│                                                                        │
+│   REST API                         SPA Fallback                        │
+│   ├─ GET  /api/professions         /{path} → frontend/dist/index.html │
+│   ├─ GET  /api/skills-for-role     POST /api/auth/register · login     │
+│   ├─ GET  /api/skills-by-category  POST /api/auth/refresh · logout    │
+│   ├─ GET  /api/suggest-skills      GET  /api/auth/me                  │
+│   ├─ POST /api/analyze-resume      PATCH /api/auth/onboarding         │
+│   ├─ POST /api/plan                GET|POST /api/analyses · GET/{id}  │
+│   ├─ POST /api/focused-plan        GET|PATCH /api/progress            │
+│   ├─ GET  /api/share/{analysis_id}                                    │
+│   └─ GET  /health                                                     │
+│                                                                        │
+├────────────────────────────────────────────────────────────────────────┤
+│                       БИЗНЕС-ЛОГИКА                                    │
+│                                                                        │
+│   ┌───────────────────┐     ┌──────────────┐     ┌──────────────────┐ │
+│   │ scenario_handler  │     │ gap_analyzer │     │ output_formatter │ │
+│   │                   │     │              │     │                  │ │
+│   │ Маршрутизация     │     │ Сопоставление│     │ Markdown-отчёт   │ │
+│   │ по сценарию       │────▶│ навыков с    │────▶│ + вызов LLM      │ │
+│   │                   │     │ требованиями │     │ для плана        │ │
+│   └───────┬───────────┘     └──────────────┘     └────────┬─────────┘ │
+│           │                                               │           │
+│   ┌───────▼───────────────────────────┐    ┌──────────────▼─────────┐ │
+│   │ next_grade_service                │    │ plan_generator         │ │
+│   │ switch_profession_service         │    │                        │ │
+│   │ explore_recommendations           │    │ GPT-4o: план 70/20/10 │ │
+│   │                                   │    │ retry + fallback       │ │
+│   │ Детализация каждого сценария      │    │                        │ │
+│   └───────────────────────────────────┘    └────────────────────────┘ │
+│                                                                        │
+├────────────────────────────────────────────────────────────────────────┤
+│                     ДАННЫЕ И NLP                                       │
+│                                                                        │
+│   ┌──────────────┐   ┌────────────────┐   ┌──────────────────────┐   │
+│   │ data_loader  │   │ skill_         │   │ rag_service          │   │
+│   │              │   │ normalizer     │   │                      │   │
+│   │ JSON-спра-   │   │                │   │ Sentence-Transformers│   │
+│   │ вочники      │   │ pymorphy3 (RU) │   │ + Qdrant             │   │
+│   │ навыков и    │   │ Snowball  (EN) │   │                      │   │
+│   │ атласа       │   │ + синонимы     │   │ Семантический поиск, │   │
+│   │              │   │                │   │ подсказки, ранжиро-  │   │
+│   └──────────────┘   └────────────────┘   │ вание ролей          │   │
+│                                            └──────────────────────┘   │
+│   ┌──────────────┐                                                    │
+│   │ resume_      │                                                    │
+│   │ parser       │   PDF → текст (pypdf) → GPT-4o → навыки          │
+│   └──────────────┘                                                    │
+│                                                                        │
+├────────────────────────────────────────────────────────────────────────┤
+│                     ДАННЫЕ ПРИЛОЖЕНИЯ                                  │
+│                                                                        │
+│   JSON-справочники (data/)          SQLite (`DB_PATH`, см. env):      │
+│   навыки · атлас · синонимы         пользователи, анализы, прогресс,   │
+│                                     refresh-токены (bcrypt + JWT)      │
+│                                                                        │
+├────────────────────────────────────────────────────────────────────────┤
+│                     ВНЕШНИЕ СЕРВИСЫ                                     │
+│                                                                        │
+│   ┌──────────────────────┐       ┌──────────────────────────────┐     │
+│   │  OpenAI API          │       │  Qdrant Cloud (опционально)  │     │
+│   │  GPT-4o              │       │  Векторная БД для RAG        │     │
+│   │  - парсинг резюме    │       │  - эмбеддинги навыков        │     │
+│   │  - генерация плана   │       │  - семантический поиск       │     │
+│   └──────────────────────┘       └──────────────────────────────┘     │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 2.2. Нормализация навыков (этап 1)
-
-Пользователь вводит навыки в произвольной форме. Система приводит их к каноническим названиям через три уровня:
-
-**Уровень 1 — Синонимы.** Словарь `skill_synonyms.json` содержит маппинги вида `"питон" → "Python"`, `"управление проектами" → "Управление проектами"`. Проверяются: точное совпадение (lowercase), нормализованное (после лемматизации), побуквенное сравнение лемм.
-
-**Уровень 2 — Лемматизация.** Для русского языка используется pymorphy3 (морфологический анализатор, возвращает нормальную форму). Для английского — NLTK SnowballStemmer. Язык определяется по наличию кириллицы в слове.
-
-**Уровень 3 — Семантический маппинг (RAG).** Если первые два уровня не дали результата, навык передаётся в `rag_service.map_to_canonical_skill()` — векторный поиск по Qdrant с порогом 0.72. Навык маппится на ближайший каноническое название если cosine similarity ≥ порога.
-
-**Конвертация уровней (фронтенд → бэкенд):**
-
-| Фронтенд (0–2) | Внутренний уровень | Описание |
-|---|---|---|
-| 0, 0.5 | 1 (Basic) | Не использую / Иногда сталкивался |
-| 1, 1.5 | 2 (Proficiency) | Уверенно применяю / В сложных ситуациях |
-| 2 | 3 (Advanced) | Могу обучать |
-
-### 2.3. Двойная ординальная шкала (этап 2–3)
-
-Система использует две различные шкалы для параметров и навыков:
-
-**Параметры атласа — 5-уровневая шкала:**
-
-| Грейд | Ordinal | Ключ в JSON |
-|---|---|---|
-| Junior | 1 | Младший |
-| Middle | 2 | Специалист |
-| Senior | 3 | Старший |
-| Lead | 4 | Ведущий |
-| Expert | 5 | Эксперт |
-
-Текущий уровень параметра = ordinal текущего грейда пользователя.
-Требуемый уровень = ordinal целевого грейда.
-Delta = required_ordinal − current_ordinal.
-
-**Навыки — 3-уровневая шкала:**
-
-| Грейд | Требуемый уровень |
-|---|---|
-| Junior | Basic (1) |
-| Middle, Senior | Proficiency (2) |
-| Lead, Expert | Advanced (3) |
-
-### 2.4. Семантический мэтчинг (этап 4)
-
-Ключевой алгоритм, решающий проблему несовпадения названий навыков пользователя и требований роли.
-
-**Алгоритм `semantic_match_skills()`:**
+### Поток данных при построении плана
 
 ```
-Вход: user_skill_names[N], required_skill_names[M]
-
-1. Генерация эмбеддингов:
-   user_vecs = encode(user_skill_names)      → [N × 384]
-   req_vecs  = encode(required_skill_names)   → [M × 384]
-
-2. Матрица косинусной близости:
-   sim_matrix = dot(user_vecs, req_vecs.T)    → [N × M]
-
-3. Отбор пар с score ≥ threshold (0.72):
-   pairs = [(score, i, j) for score ≥ 0.72]
-   pairs.sort(descending by score)
-
-4. Жадное назначение 1:1:
-   for (score, i, j) in pairs:
-     if user[i] не назначен AND required[j] не назначен:
-       result[user[i]] = required[j]
-
-Выход: {user_name → matched_required_name}
+  Пользователь              Frontend                   Backend
+  ──────────                ────────                   ───────
+       │                        │                          │
+       │  Выбирает профессию    │                          │
+       │───────────────────────▶│  GET /api/professions    │
+       │                        │─────────────────────────▶│
+       │                        │◀─────────────────────────│
+       │                        │                          │
+       │  Загружает PDF         │                          │
+       │───────────────────────▶│  POST /api/analyze-resume│
+       │                        │─────────────────────────▶│  pypdf → текст
+       │                        │                          │  GPT-4o → навыки
+       │                        │                          │  pymorphy3 → нормализация
+       │                        │◀─────────────────────────│  [{name, level}]
+       │                        │                          │
+       │  Нажимает «Построить»  │                          │
+       │───────────────────────▶│  POST /api/plan          │
+       │                        │─────────────────────────▶│  scenario_handler
+       │                        │                          │  → gap_analyzer
+       │                        │                          │  → rag_service (контекст)
+       │                        │                          │  → output_formatter
+       │                        │                          │  → plan_generator (GPT-4o)
+       │                        │◀─────────────────────────│  {markdown, analysis?, role_titles?}
+       │                        │                          │
+       │  Видит план развития   │                          │
+       │◀───────────────────────│  ReactMarkdown + TOC     │
 ```
-
-**Примеры мэтчинга:**
-- `SQL` → `Написание SQL-запросов` (score 0.83)
-- `Agile` → `Agile/Scrum` (score 0.87)
-- `Аналитика данных` → `Работа с данными` (score 0.79)
-
-**Модель эмбеддингов:** `paraphrase-multilingual-MiniLM-L12-v2` — мультиязычная модель (50+ языков), 384 измерения, L2-нормализация для cosine similarity.
-
-### 2.5. Profile Embedding (для сценария Explore)
-
-Для быстрого сравнения профиля пользователя с профилями ролей используется средний эмбеддинг:
-
-```
-user_profile_vec  = mean(encode(user_skill_names))  → normalize
-role_profile_vec  = mean(encode(role_skill_names))   → normalize
-similarity = dot(user_profile_vec, role_profile_vec)  → [0..1]
-```
-
-Используется в `scenario_handler.explore_opportunities()` для ранжирования ролей по семантической близости. Результат сортируется по `semantic_score` (profile similarity) → `match%` (точное пересечение).
-
-### 2.6. Gap-анализ (этап 5)
-
-**Алгоритм `analyze_structured()`:**
-
-```
-Для каждого требования роли:
-  1. Определить тип: параметр атласа или навык
-  2. Найти текущий уровень пользователя:
-     - Точное совпадение имени
-     - Семантическое совпадение (через semantic_match_skills)
-     - Если не найден → 0
-  3. Вычислить delta = required − current
-  4. Классифицировать:
-     - delta ≤ 0 → Strong (навык освоен)
-     - delta > 0 → Gap (разрыв)
-  5. Приоритизировать gap:
-     - delta ≥ 2 → Priority 1 (критический)
-     - delta ≥ 1 → Priority 2 (умеренный)
-     - delta < 1 → Priority 3 (минимальный)
-
-match% = |strong| / |total_requirements| × 100
-```
-
-### 2.7. Генерация плана (этап 7)
-
-Двухэтапная генерация:
-
-**Этап 1 — Диагностический отчёт.** Формируется в `output_formatter.py`: markdown с таблицами gap-анализа, описаниями навыков из JSON, ожиданиями по параметрам. Передаётся фронтенду в поле `markdown`.
-
-**Этап 2 — План развития.** Генерируется через `POST /api/focused-plan` после того, как пользователь выбрал конкретные навыки для развития.
-
-**Архитектура промпта `/api/focused-plan`:**
-
-```
-┌─────────────────────────────────────┐
-│ System: JSON-only response mode     │
-├─────────────────────────────────────┤
-│ User prompt:                        │
-│                                     │
-│ 1. Выбранные навыки: [список]       │
-│ 2. Контекст: профессия, грейд, цель│
-│ 3. Данные из JSON для каждого       │
-│    навыка:                          │
-│    - Описание целевого уровня       │
-│    - Примеры задач на развитие      │
-│                                     │
-│ Требуемый формат ответа:            │
-│ {                                   │
-│   tasks: [{skill, items[]}],        │
-│   communication: [string],          │
-│   learning: [string]                │
-│ }                                   │
-└─────────────────────────────────────┘
-```
-
-**Параметры генерации:**
-- Модель: GPT-4o
-- Temperature: 0.3 (низкая вариативность)
-- Max tokens: 2000 (для focused-plan), 4096 (для full plan)
-- Response format: `json_object`
-- Retry: 3 попытки с задержкой
 
 ---
 
-## 3. Структура данных
+## Технологии
 
-### 3.1. clean_skills.json
+### Backend
 
-~6900 записей. Каждая запись:
+| Технология | Версия | Назначение |
+|---|---|---|
+| Python | 3.12 | Основной язык бэкенда |
+| FastAPI | ≥ 0.100 | REST API с автогенерацией OpenAPI-документации |
+| Uvicorn | ≥ 0.22 | ASGI-сервер |
+| Pydantic | v2 | Валидация запросов/ответов |
+| pymorphy3 | ≥ 2.0 | Лемматизация русского языка (замена NLTK-стемминга) |
+| Sentence-Transformers | ≥ 2.2 | Мультиязычные эмбеддинги для RAG |
+| PyTorch | CPU | Runtime для Sentence-Transformers |
+| pypdf | ≥ 3.0 | Извлечение текста из PDF |
+| scikit-learn | ≥ 1.0 | Кластеризация навыков (KMeans) |
+| OpenAI SDK | ≥ 1.0 | Взаимодействие с GPT-4o |
+| bcrypt, PyJWT | — | Хеширование паролей, access/refresh JWT |
+| SQLite (stdlib + `db.py`) | — | Пользователи, анализы, прогресс, сессии refresh |
 
-| Поле | Описание |
+### Frontend
+
+| Технология | Версия | Назначение |
+|---|---|---|
+| React | 19 | UI-фреймворк с функциональными компонентами и хуками |
+| TypeScript | 5.9 | Строгая типизация всего приложения |
+| Vite | 7 | Сборщик с мгновенным HMR |
+| Tailwind CSS | 4 | Utility-first стилизация с CSS-переменными для тем |
+| React Markdown | 10 | Рендеринг Markdown-планов с поддержкой GFM |
+| Recharts | 3 | Радар и визуализация gap-анализа |
+| Lucide React | — | SVG-иконки (tree-shakeable) |
+| React Dropzone | 15 | Drag-and-drop загрузка PDF |
+
+### Внешние сервисы
+
+| Сервис | Назначение | Обязательность |
+|---|---|---|
+| OpenAI GPT-4o | Парсинг резюме, генерация планов | Да |
+| Qdrant Cloud | Векторная БД для RAG | Нет (деградация: нет семантических подсказок) |
+
+### Инфраструктура
+
+| Технология | Назначение |
 |---|---|
-| `Навык` | Каноническое название |
-| `Профессия (лист)` | Внутреннее название скиллсета (привязка к профессии) |
-| `Категория` | Тематическая группа (ML & Data, Инструменты, и т.д.) |
-| `Свойства` | Тип навыка |
-| `Skill level \\ Индикатор - Basic` | Описание поведения на уровне Basic |
-| `Skill level \\ Индикатор - Proficiency` | Описание поведения на уровне Proficiency |
-| `Skill level \\ Индикатор - Advanced` | Описание поведения на уровне Advanced |
-| `Пример задач на развитие \\ уровень Basic` | Конкретные задачи для прокачки до Basic |
-| `Пример задач на развитие \\ уровень Proficiency` | Задачи для Proficiency |
-| `Пример задач на развитие \\ уровень Advanced` | Задачи для Advanced |
-
-### 3.2. atlas_params_clean.json
-
-7 параметров карьерного роста:
-
-| Поле | Описание |
-|---|---|
-| `Параметр` | Название (Автономность, Масштаб влияния и т.д.) |
-| `Описание` | Общее описание параметра |
-| `Младший` ... `Эксперт` | Текстовые ожидания для каждого грейда |
-
-### 3.3. skill_synonyms.json
-
-Словарь `{синоним: каноническое_название}`. Примеры: `"питон" → "Python"`, `"управление проектами" → "Управление проектами"`.
+| Docker (multi-stage) | Stage 1: Node.js собирает фронтенд. Stage 2: Python запускает бэкенд |
+| Railway | Облачный хостинг с автодеплоем из `main` |
 
 ---
 
-## 4. API
+## Структура проекта
 
-### 4.1. Основные эндпоинты
+```
+career-copilot/
+│
+├── api.py                          # FastAPI REST API + SPA-раздача
+├── main.py                         # Gradio UI (альтернативный интерфейс)
+├── config.py                       # Конфигурация и env-переменные
+│
+├── data_loader.py                  # Загрузка JSON-справочников, требования ролей
+├── skill_normalizer.py             # Лемматизация (pymorphy3) + словарь синонимов
+├── resume_parser.py                # PDF → текст → GPT-4o → навыки
+├── rag_service.py                  # RAG: Qdrant + Sentence-Transformers
+│
+├── scenario_handler.py             # Маршрутизация трёх сценариев
+├── next_grade_service.py           # Логика «Следующий грейд»
+├── switch_profession_service.py    # Логика «Смена профессии»
+├── explore_recommendations.py      # Логика «Исследование возможностей»
+│
+├── gap_analyzer.py                 # Gap-анализ: навыки vs требования
+├── output_formatter.py             # Markdown-отчёт + вызов plan_generator
+├── plan_generator.py               # Генерация плана 70/20/10 через GPT-4o
+│
+├── build_rag_index.py              # Скрипт построения RAG-индекса в Qdrant
+│
+├── data/
+│   ├── clean_skills.json           # ~6 900 навыков с привязкой к профессиям
+│   ├── atlas_params_clean.json     # Параметры карьерного роста по грейдам
+│   └── skill_synonyms.json         # Словарь синонимов навыков
+│
+├── tests/
+│   ├── test_skill_normalizer.py
+│   ├── test_next_grade_service.py
+│   ├── test_switch_profession_service.py
+│   └── test_explore_recommendations.py
+│
+├── frontend/                       # React SPA
+│   ├── src/
+│   │   ├── main.tsx                # Точка входа: React 19 + ThemeProvider + ErrorBoundary
+│   │   ├── App.tsx                 # Корневой компонент: состояние, навигация, persistence
+│   │   │
+│   │   ├── screens/
+│   │   │   ├── PublicLanding.tsx   # Публичный лендинг
+│   │   │   ├── Auth.tsx            # Регистрация / вход
+│   │   │   ├── OnboardingQuiz.tsx  # Квиз после регистрации
+│   │   │   ├── Dashboard.tsx       # Личный кабинет
+│   │   │   ├── GoalSetup.tsx       # Профессия + сценарий + грейд
+│   │   │   ├── Skills.tsx          # Ввод навыков (PDF / вручную / подсказки)
+│   │   │   ├── Confirmation.tsx    # Проверка данных перед генерацией
+│   │   │   ├── Result.tsx          # План + TOC + сохранение анализа
+│   │   │   ├── GrowthPage.tsx      # UI сценария «Следующий грейд»
+│   │   │   └── SwitchPage.tsx      # UI сценария «Смена профессии»
+│   │   │
+│   │   ├── components/
+│   │   │   ├── SearchableSelect.tsx # Комбобокс с поиском для профессий
+│   │   │   ├── SkillCard.tsx        # Карточка навыка с уровнем
+│   │   │   ├── ScenarioCard.tsx     # Карточка сценария
+│   │   │   ├── ErrorBoundary.tsx    # Перехват неожиданных ошибок
+│   │   │   ├── Toast.tsx            # Toast-уведомления (undo и др.)
+│   │   │   ├── toastStore.ts        # Глобальный store для toast-ов
+│   │   │   ├── Skeleton.tsx         # Skeleton-загрузочные экраны
+│   │   │   ├── FeedbackRating.tsx   # Оценка полезности плана
+│   │   │   ├── ShareCard.tsx        # Шаринг результата по ссылке
+│   │   │   ├── ProtectedRoute.tsx   # Защита маршрутов с авторизацией
+│   │   │   ├── Alert.tsx            # Алерты (error/warning/info/success)
+│   │   │   ├── Layout.tsx           # Обёртка: header + stepper + footer
+│   │   │   ├── NavBar.tsx           # Логотип + переключатель темы
+│   │   │   ├── Stepper.tsx          # Прогресс-индикатор (5 шагов)
+│   │   │   ├── Spinner.tsx          # Индикатор загрузки
+│   │   │   ├── MiniProgress.tsx     # Метка «Шаг N из M»
+│   │   │   └── SoftOnboardingHint.tsx # Всплывающие подсказки
+│   │   │
+│   │   ├── auth/
+│   │   │   └── AuthContext.tsx     # JWT access/refresh, persist в sessionStorage
+│   │   ├── api/
+│   │   │   └── client.ts           # API-клиент с AbortController + Bearer
+│   │   │
+│   │   ├── types/
+│   │   │   └── index.ts            # TypeScript-типы: Skill, AppState, PlanRequest и др.
+│   │   │
+│   │   ├── theme.tsx               # ThemeProvider (dark/light)
+│   │   ├── themeContext.ts         # React Context для темы
+│   │   ├── useTheme.ts            # Хук для доступа к теме
+│   │   └── index.css              # Tailwind + CSS-переменные + анимации
+│   │
+│   ├── package.json
+│   ├── vite.config.ts
+│   ├── tsconfig.json
+│   └── eslint.config.js
+│
+├── requirements.txt
+├── Dockerfile
+├── Procfile
+└── docs/
+    ├── ARCHITECTURE.md
+    ├── TECHNICAL_DESCRIPTION.md
+    └── DEPLOY_RAILWAY.md
+```
 
-| Метод | Путь | Назначение |
+---
+
+## Быстрый старт
+
+### Предварительные требования
+
+- Python 3.12+
+- Node.js 20+ (для сборки фронтенда)
+- API-ключ OpenAI
+
+### Установка
+
+```bash
+git clone https://github.com/superdash777/career_buid_sysytem.git
+cd career_buid_sysytem
+
+# Backend
+pip install -r requirements.txt
+
+# Frontend
+cd frontend && npm install && npm run build && cd ..
+```
+
+### Настройка
+
+Создайте файл `.env` в корне проекта:
+
+```env
+OPENAI_API_KEY=sk-...
+
+# Опционально (для RAG):
+QDRANT_URL=https://xxx.qdrant.io
+QDRANT_API_KEY=...
+```
+
+### Запуск
+
+```bash
+# REST API + React SPA
+python api.py
+# → http://localhost:8000
+
+# Альтернативно: Gradio UI
+python main.py
+# → http://localhost:7860
+```
+
+### Docker
+
+```bash
+docker build -t career-copilot .
+docker run -p 8000:8000 -e OPENAI_API_KEY=sk-... career-copilot
+```
+
+На **Railway** в Dockerfile нельзя использовать `VOLUME` — диск подключается через **Railway Volumes**. Том на **`/app/data`** допустим: в образе дубликат справочников лежит в **`_data_shipped`**, приложение само подставит его, если том перекрыл `clean_skills.json`. SQLite по умолчанию: **`data/app.db`** (на том же томе при mount `/app/data`). Локально в Docker: `-e DB_PATH=/data/app.db -v copilot_db:/data`.
+
+Compose с постоянной БД:
+
+```bash
+docker compose up --build
+```
+
+(в `docker-compose.yml` заданы `DB_PATH=/data/app.db` и именованный volume.)
+
+**Важно для авторизации:** если контейнер каждый раз стартует с **пустой** SQLite, старый JWT из браузера остаётся валидным, а записи пользователя в новой базе нет — API вернёт 401 с кодом `USER_NOT_FOUND`. Нужен постоянный диск для `DB_PATH` или одна реплика с общим хранилищем.
+
+---
+
+## REST API
+
+Документация доступна по адресу `http://localhost:8000/docs` (Swagger UI).
+
+| Метод | Путь | Описание |
 |---|---|---|
-| `GET` | `/api/professions` | Список профессий |
-| `GET` | `/api/skills-for-role?profession=...` | Навыки для профессии |
-| `GET` | `/api/suggest-skills?q=...` | Подсказки навыков (RAG + синонимы) |
-| `POST` | `/api/analyze-resume` | PDF → извлечение навыков через GPT-4o |
-| `POST` | `/api/plan` | Gap-анализ + диагностика + structured analysis |
-| `POST` | `/api/focused-plan` | Фокусный план по выбранным навыкам |
-| `GET` | `/health` | Проверка состояния |
+| GET | `/api/professions` | Список профессий |
+| GET | `/api/skills-for-role?profession=...` | Навыки для профессии |
+| GET | `/api/suggest-skills?q=...` | Подсказки навыков (синонимы + RAG) |
+| POST | `/api/analyze-resume` | Загрузка PDF → список навыков |
+| POST | `/api/plan` | Построение плана развития |
+| POST | `/api/focused-plan` | Фокусный план по выбранным навыкам (JSON) |
+| POST | `/api/auth/register` | Регистрация (email, пароль) → JWT |
+| POST | `/api/auth/login` | Вход → JWT |
+| POST | `/api/auth/refresh` | Обновление access по refresh |
+| POST | `/api/auth/logout` | Отзыв refresh |
+| GET | `/api/auth/me` | Текущий пользователь (Bearer) |
+| PATCH | `/api/auth/onboarding` | Сохранение онбординга (Bearer) |
+| GET | `/api/analyses` | Список сохранённых анализов (Bearer) |
+| POST | `/api/analyses` | Сохранить результат анализа (Bearer) |
+| GET | `/api/analyses/{id}` | Детали анализа (Bearer) |
+| GET | `/api/share/{analysis_id}` | Публичный просмотр сохранённого результата |
+| GET | `/api/progress` | Прогресс по навыкам (Bearer) |
+| PATCH | `/api/progress` | Обновить статус навыка todo / in_progress / done (Bearer) |
+| GET | `/health` | Health check |
 
-### 4.2. POST /api/plan — основной эндпоинт
+### Пример: построение плана
 
-**Запрос:**
+```bash
+curl -X POST http://localhost:8000/api/plan \
+  -H "Content-Type: application/json" \
+  -d '{
+    "profession": "Product Manager",
+    "grade": "Специалист (Middle)",
+    "skills": [{"name": "SQL", "level": 1.5}, {"name": "Коммуникация", "level": 2}],
+    "scenario": "Следующий грейд"
+  }'
+```
+
+Ответ:
+
 ```json
 {
-  "profession": "Менеджер продукта",
-  "grade": "Специалист (Middle)",
-  "skills": [{"name": "SQL", "level": 1.5}],
-  "scenario": "Следующий грейд",
-  "target_profession": null
+  "markdown": "# План развития: Product Manager → Senior\n\n...",
+  "role_titles": null,
+  "analysis": { "...": "структура для UI (radar, skill_gaps, сценарий и т.д.)" }
 }
 ```
 
-**Ответ:**
-```json
-{
-  "markdown": "# Цель: Перейти на следующий грейд\n...",
-  "analysis": {
-    "scenario": "growth",
-    "current_grade": "Middle",
-    "target_grade": "Senior",
-    "match_percent": 42,
-    "radar_data": [
-      {"param": "Автономность", "current": 2, "target": 3,
-       "current_label": "Специалист", "target_label": "Старший"}
-    ],
-    "skill_gaps": [
-      {"name": "System Design", "current": 0, "required": 2, "delta": 2,
-       "level_key": "Proficiency", "description": "...", "tasks": "..."}
-    ],
-    "skill_strong": [{"name": "SQL", "level": 2}]
-  }
-}
-```
-
-### 4.3. POST /api/focused-plan
-
-**Запрос:**
-```json
-{
-  "profession": "Менеджер продукта",
-  "grade": "Специалист (Middle)",
-  "scenario": "Следующий грейд",
-  "selected_skills": ["System Design", "Roadmap"]
-}
-```
-
-**Ответ:**
-```json
-{
-  "tasks": [
-    {"skill": "System Design", "items": ["Спроектировать API для нового сервиса", "Провести ревью архитектуры"]}
-  ],
-  "communication": ["Найти ментора по архитектуре", "Участвовать в design review"],
-  "learning": ["Книга: 'Designing Data-Intensive Applications'"]
-}
-```
+Поле `analysis` присутствует, когда бэкенд сформировал структурированные данные для экранов Growth / Switch / Explore.
 
 ---
 
-## 5. Три сценария
+## Переменные окружения
 
-### 5.1. Следующий грейд (Growth)
+| Переменная | Обязательно | По умолчанию | Описание |
+|---|---|---|---|
+| `OPENAI_API_KEY` | Да | — | Ключ OpenAI API |
+| `QDRANT_URL` | Нет | — | URL Qdrant для RAG |
+| `QDRANT_API_KEY` | Нет | — | API-ключ Qdrant |
+| `RESUME_PARSER_MODEL` | Нет | `gpt-4o` | Модель для парсинга резюме |
+| `RESUME_TEXT_MAX_CHARS` | Нет | `14000` | Лимит текста резюме |
+| `RAG_COLLECTION_NAME` | Нет | `career_pathfinder_rag` | Название legacy-коллекции Qdrant (MiniLM fallback) |
+| `EMBED_MODEL_NAME` | Нет | `paraphrase-multilingual-MiniLM-L12-v2` | Модель эмбеддингов для legacy/fallback |
+| `SKILLS_V2_COLLECTION_NAME` | Нет | `skills_v2` | Новая коллекция канонических навыков (E5) |
+| `EMBED_MODEL_NAME_V2` | Нет | `intfloat/multilingual-e5-large-instruct` | Модель эмбеддингов v2 для нормализации навыков |
+| `PORT` | Нет | `8000` | Порт сервера |
+| `DB_PATH` | Нет | `<корень проекта>/data/app.db` | SQLite; при томе на `/app/data` файл окажется на постоянном диске. Иначе можно абсолютный путь, например `/data/app.db` |
+| `JWT_SECRET` | Нет | `change-me-in-production` | Секрет подписи JWT; в продакшене задайте свой |
+| `JWT_ACCESS_TOKEN_TTL_MINUTES` | Нет | `4320` | Срок жизни access-токена (по умолчанию 3 суток) |
+| `JWT_REFRESH_TOKEN_TTL_MINUTES` | Нет | `43200` | Срок жизни refresh-токена (по умолчанию 30 суток) |
+| `AUTH_RATE_LIMIT_WINDOW_SEC` | Нет | `60` | Окно rate limit для auth |
+| `AUTH_LOGIN_RATE_LIMIT` / `AUTH_REGISTER_RATE_LIMIT` | Нет | `10` | Макс. попыток логина / регистраций в окне |
+| `PLAN_CONTEXT_MAX_CHARS` | Нет | `12000` | Лимит символов контекста для генератора плана |
 
-Определяет целевой грейд как следующий в последовательности Junior→Middle→Senior→Lead→Expert. Загружает требования целевого грейда, выполняет gap-анализ, формирует radar chart по параметрам атласа.
-
-### 5.2. Смена профессии (Switch)
-
-Загружает требования целевой роли на baseline-уровне (на один грейд ниже целевого). Выполняет gap-анализ с семантическим мэтчингом. Разделяет навыки на переносимые (transferable) и недостающие (gaps). Использует кластеризацию навыков (KMeans) для формирования рекомендуемых треков.
-
-### 5.3. Исследование возможностей (Explore)
-
-Перебирает все роли на грейдах Junior/Middle/Senior. Для каждой считает: точное пересечение + семантический мэтчинг + profile embedding similarity. Дедуплицирует и категоризирует: ближайшие (≥15%), смежные (5–15%), дальние (<5%).
+Без Qdrant приложение работает полностью — не будет семантических подсказок навыков и семантического ранжирования ролей, но gap-анализ и генерация планов доступны.
 
 ---
 
-## 6. Фронтенд (реализован с помощью Cursor)
+## Данные
 
-### 6.1. Экранный поток
+### Навыки (`data/clean_skills.json`)
 
+Текущая версия датасета в репозитории содержит 534 записи. Каждый навык привязан к профессии и содержит описания трёх уровней владения:
+
+- **Basic** — применяет в типовых ситуациях
+- **Proficiency** — применяет в нестандартных ситуациях
+- **Advanced** — может обучать других
+
+### Атлас параметров (`data/atlas_params_clean.json`)
+
+~10 метакомпетенций (автономность, масштаб задач, сложность, коммуникация). Для каждого параметра определены ожидания по пяти грейдам (Junior → Expert). Применяются ко всем профессиям
+### Синонимы (`data/skill_synonyms.json`)
+
+Словарь `{вариант: каноническое_название}`. Используется для нормализации: «питон» → «Python», «эксель» → «Excel».
+
+---
+
+## Тесты
+
+```bash
+pytest tests/ -v
 ```
-Welcome → GoalSetup → Skills → Confirmation → Result
-                                                  │
-                                          ┌───────▼────────┐
-                                          │ Выбор gap-ов   │
-                                          │ (чекбоксы)     │
-                                          └───────┬────────┘
-                                                  │
-                                          ┌───────▼────────┐
-                                          │ Focused Plan   │
-                                          │ (3 секции)     │
-                                          └────────────────┘
+
+Покрытие: нормализация навыков, сценарии (next grade, switch profession, explore), gap-анализ.
+
+---
+
+## Eval pipeline
+
+Оценка качества пайплайна выполняется через `eval.py` на размеченном датасете
+`eval_dataset.json` (50 примеров).
+
+```bash
+python3 eval.py --version v2 --verbose
 ```
 
-### 6.2. Визуализация результатов
+Результат сохраняется в:
 
-**Growth:** Radar chart (Recharts) для 7 параметров атласа, прогресс-бары для зон развития, аккордеон с описаниями навыков.
+```text
+eval_results/<timestamp>_<version>.json
+```
 
-**Switch:** Карточка сравнения "из → в" с процентом совместимости, чипсы переносимых навыков и зон роста.
+### Threshold analysis (precision/recall curve)
 
-**Explore:** Сетка карточек ролей с цветовой категорией и процентом совпадения.
+```bash
+python3 scripts/threshold_analysis.py --dataset eval_dataset.json
+```
 
-### 6.3. Темизация
-
-CSS Custom Properties с двумя наборами значений (`:root` / `.dark`). Переключение через `ThemeProvider` с сохранением в `localStorage`. Inline-скрипт в `index.html` предотвращает вспышку при загрузке.
-
----
-
-## 7. Деплой (Реализован через railways)
-
-Multi-stage Dockerfile:
-- Stage 1 (Node.js 20): `npm ci` + `npm run build` → `frontend/dist`
-- Stage 2 (Python 3.12): `pip install` + копирование + `python api.py`
-
-FastAPI раздаёт статику из `frontend/dist` через catch-all маршрут. Один контейнер, один URL.
+Скрипт прогоняет нормализацию при порогах `0.50..0.85` и сохраняет:
+- CSV с метриками;
+- PNG с precision-recall кривой.
 
 ---
 
-## 8. Конфигурация
+## Деплой
 
-| Переменная | Значение | Описание |
-|---|---|---|
-| `OPENAI_API_KEY` | — | Ключ OpenAI (обязателен для AI-генерации) |
-| `QDRANT_URL` | — | URL Qdrant Cloud |
-| `QDRANT_API_KEY` | — | API-ключ Qdrant |
-| `SKILL_MAP_SIMILARITY_THRESHOLD` | 0.72 | Порог маппинга навыка → канонический |
-| `SKILL_MATCH_THRESHOLD` | 0.72 | Порог семантического мэтчинга при gap-анализе |
-| `RAG_SCORE_THRESHOLD` | 0.35 | Порог релевантности при RAG-поиске |
-| `EXPLORE_CLOSEST_MIN` | 0.15 | Порог категории "ближайшие" (≥15%) |
-| `EXPLORE_ADJACENT_MIN` | 0.05 | Порог категории "смежные" (≥5%) |
+Приложение деплоится на Railway с автодеплоем из ветки `main`. Подробности: [docs/DEPLOY_RAILWAY.md](docs/DEPLOY_RAILWAY.md).
+
+Multi-stage Docker-сборка:
+1. **Stage 1 (Node.js 20)** — `npm ci && npm run build` → статические файлы
+2. **Stage 2 (Python 3.12)** — `pip install` + исходный код + собранный фронтенд
 
 ---
 
-## 9. Метрики качества обработки данных (Следующие шаги)
+## Лицензия
 
-Для объективной оценки качества каждого этапа пайплайна определена система метрик, реализация которых запланирована в следующих итерациях продукта.
-
-### 9.1. Метрики нормализации навыков
-
-| Метрика | Определение | Целевое значение |
-|---|---|---|
-| **Recall нормализации** | Доля пользовательских навыков, для которых найдено каноническое соответствие (через синонимы, лемматизацию или RAG) | ≥ 80% |
-| **Precision нормализации** | Доля корректных маппингов среди всех выполненных (оценивается на размеченной выборке из 100–200 пар) | ≥ 90% |
-
-### 9.2. Метрики RAG-поиска (Retrieval)
-
-| Метрика | Определение | Целевое значение |
-|---|---|---|
-| **Coverage индекса** | `кол-во точек в Qdrant / кол-во навыков в JSON × 100%` — полнота индексации | ≥ 95% |
-| **Precision@K** | Доля релевантных результатов среди K возвращённых (для подсказок навыков и RAG-контекста) | ≥ 75% при K=5 |
-| **Recall@K** | Доля найденных релевантных навыков из всех релевантных в базе | ≥ 60% при K=5 |
-| **MRR (Mean Reciprocal Rank)** | Средняя обратная позиция первого релевантного результата | ≥ 0.7 |
-| **Empty result rate** | Доля запросов, для которых RAG возвращает 0 результатов | ≤ 15% |
-| **Score distribution** | Средняя cosine similarity по возвращённым результатам | ≥ 0.55 |
-
-### 9.3. Метрики семантического мэтчинга навыков
-
-| Метрика | Определение | Целевое значение |
-|---|---|---|
-| **Precision мэтчинга** | Доля корректных семантических пар (ручная оценка на 50–100 парах) | ≥ 85% |
-| **Recall мэтчинга** | Доля навыков пользователя, которые нашли корректную пару среди требований роли | ≥ 70% |
-| **F1-score** | Гармоническое среднее precision и recall | ≥ 0.77 |
-| **Threshold sensitivity** | Кривая precision/recall при варьировании порога 0.60–0.85; оптимум — максимум F1 | — |
-| **Match rate** | `кол-во корректно смэтченных пар / кол-во навыков пользователя × 100%` | ≥ 50% |
-| **Средний score пар** | Средняя cosine similarity по matched парам (уверенность мэтчинга) | ≥ 0.78 |
-
-### 9.4. Метрики RAG-контекста для LLM
-
-| Метрика | Определение | Целевое значение |
-|---|---|---|
-| **Context relevance** | Доля чанков в контексте, относящихся к gap-навыкам пользователя | ≥ 70% |
-| **Context utilization** | Доля чанков, информация из которых использована LLM в итоговом плане | ≥ 50% |
-| **Faithfulness** | Доля утверждений в плане, подтверждаемых данными из контекста (не галлюцинации) | ≥ 85% |
-| **Context size** | Количество токенов в RAG-контексте | 500–2500 токенов |
-
-### 9.5. Метрики генерации плана (AI)
-
-| Метрика | Определение | Целевое значение |
-|---|---|---|
-| **Completeness** | `навыков в ответе / выбранных навыков × 100%` — все ли выбранные навыки получили рекомендации | 100% |
-| **Hallucination rate** | Доля рекомендаций, не основанных на данных из контекста | ≤ 10% |
-| **Средняя длина ответа** | Количество токенов в сгенерированном плане | 400–1500 токенов |
-
-### 9.6. Метрики сценария Explore
-
-| Метрика | Определение | Целевое значение |
-|---|---|---|
-| **Profile similarity distribution** | Разброс cosine similarity между профилем пользователя и профилями ролей | std ≥ 0.15 |
-| **Top-3 relevance** | Ручная оценка: доля случаев, когда первые 3 роли действительно ближайшие к профилю | ≥ 80% |
-| **Semantic vs exact agreement** | Корреляция между семантическим score и точным match% | r ≥ 0.5 |
-
-### 9.7. План реализации мониторинга
-
-Реализация системы метрик запланирована в два этапа:
-
-**Этап 1 — Автоматическое логирование (ближайшая итерация).** Добавление структурированных логов в ключевые функции пайплайна: `_skills_table_to_user_skills`, `semantic_match_skills`, `analyze_structured`, `focused_plan_api`. Метрики: match rate, empty result rate, score distribution, completeness, JSON validity. Логи агрегируются и визуализируются на дашборде.
-
-**Этап 2 — Ручная оценка ** Разметка 30–50 эталонных кейсов: профиль пользователя → ожидаемые gap-навыки → ожидаемые matched пары → ожидаемые роли в Explore. Сравнение выхода системы с эталоном для расчёта precision, recall, F1, faithfulness. Определение оптимального порога семантического мэтчинга через кривую precision-recall.
+Проект для учебных целей.
