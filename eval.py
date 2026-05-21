@@ -12,7 +12,7 @@ import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 import random
 
 from data_loader import DataLoader, GRADE_TO_PARAM_ORDINAL
@@ -228,7 +228,6 @@ def _run_resume_pipeline(
     parser: ResumeParser,
     resume_text: str,
     skills_dicts: List[Dict[str, Any]],
-    retrieval_mode: Optional[str] = None,
 ) -> Dict[str, Any]:
     if version == "v1":
         names = [(s.get("Навык") or s.get("name") or "").strip() for s in skills_dicts]

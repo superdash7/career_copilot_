@@ -1,13 +1,6 @@
 """
 REST API для AI Career Pathfinder (для подключения отдельного фронтенда).
 Запуск: uvicorn api:app --reload --host 127.0.0.1 --port 8000
-
-Шаг 5: улучшения существующих эндпоинтов:
-  - /api/analyze-resume: confidence-оценка навыков, alternatives, evidence
-  - /api/skills-by-category: новый эндпоинт для ручного выбора навыков
-  - /api/plan: параллельный _build_role_matches (ThreadPoolExecutor),
-               EXPLORE_SKIP_SECOND_RANK, улучшенный _build_explore_analysis
-  - /api/focused-plan: валидация кол-ва навыков для explore, делегирование в PlanGenerator
 """
 
 import os
@@ -33,6 +26,7 @@ import json
 import jwt
 import bcrypt
 
+# Инициализация модулей (как в main)
 from data_loader import DataLoader
 from resume_parser import ResumeParser
 from gap_analyzer import GapAnalyzer
@@ -95,10 +89,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# ---------------------------------------------------------------------------
-# Auth helpers (без изменений относительно шага 4)
-# ---------------------------------------------------------------------------
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -224,10 +214,6 @@ def _get_current_user(
         )
     return user
 
-
-# ---------------------------------------------------------------------------
-# Auth models & endpoints (без изменений относительно шага 4)
-# ---------------------------------------------------------------------------
 
 class RegisterRequest(BaseModel):
     email: str
@@ -405,6 +391,10 @@ def me(current_user: Dict[str, Any] = Depends(_get_current_user)):
 
 @app.get("/api/share/{analysis_id}")
 def get_shared_analysis(analysis_id: str):
+    """
+    Публичный read-only доступ к результату анализа по его ID.
+    Используется для шаринга карточки результата.
+    """
     with get_db_connection() as conn:
         row = conn.execute(
             "SELECT id, scenario, current_role, target_role, result_json, created_at "
@@ -594,10 +584,6 @@ def patch_progress(
     }
 
 
-# ---------------------------------------------------------------------------
-# Core endpoints — IMPROVED in this step
-# ---------------------------------------------------------------------------
-
 @app.get("/api/professions")
 def get_professions():
     """Список профессий для выбора."""
@@ -656,11 +642,7 @@ def suggest_skills(q: str = ""):
 
 @app.post("/api/analyze-resume")
 async def analyze_resume(file: UploadFile = File(...)):
-    """
-    Загрузка PDF, извлечение навыков.
-    Возвращает список [{raw_name, name, level, confidence, confidence_band, alternatives, evidence}].
-    УЛУЧШЕНИЕ: добавлены confidence-оценка, alternatives и evidence для каждого навыка.
-    """
+    """Загрузка PDF, извлечение навыков. Возвращает список [{name, level}]."""
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Нужен PDF файл")
     if not parser.client:
@@ -674,6 +656,7 @@ async def analyze_resume(file: UploadFile = File(...)):
             if not text or not text.strip():
                 return {"skills": [], "error": "Не удалось извлечь текст из PDF"}
             skills_dicts = data.skills
+            canonical_names = [s.get("Навык") or s.get("name") for s in skills_dicts]
             result = parser.parse_skills(text, skills_dicts)
 
             level_mapping = {0: 0, 1: 1, 2: 1.5, 3: 2}
@@ -730,13 +713,16 @@ async def analyze_resume(file: UploadFile = File(...)):
 
 class PlanRequest(BaseModel):
     profession: str
-    grade: str
-    skills: List[dict]
-    scenario: str
+    grade: str  # ключ из GRADE_MAP, например "Специалист (Middle)"
+    skills: List[dict]  # [{"name": str, "level": float}]
+    scenario: str  # "Следующий грейд" | "Смена профессии" | "Исследование возможностей"
     target_profession: Optional[str] = None
 
 
 def _skills_table_to_user_skills(skills: List[dict]) -> dict:
+    """Конвертирует навыки фронтенда (float 0..2) во внутренние уровни (1..3) с нормализацией имён.
+    Маппинг по спецификации: 0-0.5→Basic(1), 1-1.5→Proficiency(2), 2→Advanced(3).
+    Навык на уровне 0 «Нет навыка» = пользователь явно указал отсутствие → Basic(1)."""
     raw = {}
     for item in skills:
         name = (item.get("name") or "").strip()
@@ -749,11 +735,11 @@ def _skills_table_to_user_skills(skills: List[dict]) -> dict:
         if level != level:
             continue
         if level <= 0.5:
-            internal_level = 1
+            internal_level = 1   # Basic
         elif level <= 1.5:
-            internal_level = 2
+            internal_level = 2   # Proficiency
         else:
-            internal_level = 3
+            internal_level = 3   # Advanced
         raw[name] = internal_level
 
     try:
@@ -788,7 +774,7 @@ def _dedupe_opportunities(opportunities):
 
 
 def _build_role_matches(opps, user_skills):
-    """Строит RoleMatch для explore; RAG why_match запрашивается параллельно."""
+    """Строит RoleMatch для explore; RAG why_match запрашивается параллельно (раньше — N последовательных HTTP)."""
     from concurrent.futures import ThreadPoolExecutor
     from explore_recommendations import RoleMatch
     try:
@@ -823,6 +809,7 @@ def _build_role_matches(opps, user_skills):
 
     if not opps:
         return []
+    # Sequential-ish RAG: many parallel retrieves still serialize on embed lock and overload Qdrant.
     max_workers = min(2, max(1, len(opps)))
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         return list(pool.map(_one, opps))
@@ -883,7 +870,6 @@ def _build_switch_analysis(switch_vm, from_role, to_role):
 
 
 def _build_explore_analysis(view_model):
-    """УЛУЧШЕНИЕ: добавлено поле summary для каждой роли."""
     def card_to_dict(c, category):
         summary = ". ".join(c.reasons[:3]).strip()
         summary = summary[:220]
@@ -923,6 +909,7 @@ def build_plan_api(req: PlanRequest):
     atlas_param_names = list(data.atlas_map.keys())
     role_titles = []
 
+    # Проставляем atlas-параметры по текущему грейду (5-level ordinal)
     from data_loader import GRADE_TO_PARAM_ORDINAL
     current_param_ordinal = GRADE_TO_PARAM_ORDINAL.get(grade_key, 2)
     for param_name in atlas_param_names:
@@ -965,8 +952,7 @@ def build_plan_api(req: PlanRequest):
 
         else:
             opps = scenarios.explore_opportunities(user_skills)
-            # УЛУЧШЕНИЕ: semantic_score уже посчитан в explore_opportunities;
-            # повторный rank — лишняя загрузка MiniLM, пропускаем по умолчанию
+            # semantic_score уже посчитан в explore_opportunities; повторный rank — лишняя загрузка MiniLM
             if not getattr(Config, "EXPLORE_SKIP_SECOND_RANK", True):
                 try:
                     from rag_service import rank_opportunities
@@ -1005,10 +991,7 @@ class FocusedPlanRequest(BaseModel):
 
 @app.post("/api/focused-plan")
 def focused_plan_api(req: FocusedPlanRequest):
-    """
-    Генерирует фокусный план по выбранным навыкам.
-    УЛУЧШЕНИЕ: валидация кол-ва навыков для explore, делегирование в PlanGenerator.
-    """
+    """Генерирует фокусный план по выбранным навыкам. Возвращает {tasks, communication, learning}."""
     if not req.selected_skills:
         raise HTTPException(status_code=400, detail="Выберите хотя бы один навык")
     if req.scenario == "Исследование возможностей":
@@ -1071,6 +1054,8 @@ def focused_plan_api(req: FocusedPlanRequest):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
 
 
 FRONTEND_DIR = PROJECT_DIR / "frontend" / "dist"
