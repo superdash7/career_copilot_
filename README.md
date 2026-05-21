@@ -1,4 +1,4 @@
-# Career Copilot — AI Career Pathfinder
+# CareerCopilot 
 
 **Персональный навигатор карьерного роста на основе AI**
 
