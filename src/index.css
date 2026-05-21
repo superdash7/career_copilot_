@@ -1,0 +1,175 @@
+@import "tailwindcss";
+@import "./styles/tokens.css";
+@import "./styles/typography.css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    @apply min-h-screen bg-[var(--bg)] text-[var(--ink)] antialiased;
+  }
+}
+
+@layer components {
+  .legal-dialog::backdrop {
+    background: rgb(0 0 0 / 0.45);
+  }
+
+  .grid-bg-layer {
+    background-image:
+      radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--line) 40%, transparent) 1px, transparent 0);
+    background-size: 24px 24px;
+    opacity: 0.5;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-transparent px-5 py-2.5 font-semibold text-sm transition-all duration-200;
+    background: var(--blue-deep);
+    color: #ffffff;
+  }
+
+  .btn-primary:hover {
+    background: var(--color-accent-hover);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(84, 101, 255, 0.28);
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border px-5 py-2.5 font-semibold text-sm transition-all duration-200;
+    border-color: var(--line);
+    background: var(--paper);
+    color: var(--ink);
+  }
+
+  .btn-secondary:hover {
+    border-color: var(--blue-deep);
+    color: var(--blue-deep);
+    transform: translateY(-1px);
+  }
+
+  .card {
+    @apply rounded-2xl border p-6;
+    border-color: var(--line);
+    background: var(--paper);
+    box-shadow: var(--shadow-soft);
+  }
+
+  .input-field {
+    @apply w-full rounded-xl border px-4 pb-3 pt-5 text-[15px] leading-5 transition-all duration-150 outline-none;
+    border-color: var(--line);
+    background: var(--paper);
+    color: var(--ink);
+  }
+
+  .input-field::placeholder {
+    color: transparent;
+  }
+
+  .input-field:focus {
+    border-color: var(--blue-deep);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue-deep) 12%, transparent);
+  }
+
+  .float-field {
+    @apply relative;
+  }
+
+  .float-label {
+    @apply pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 px-1 text-sm transition-all duration-150;
+    color: var(--muted);
+    background: transparent;
+  }
+
+  .float-field .input-field:not(:placeholder-shown) + .float-label,
+  .float-field .input-field:focus + .float-label {
+    top: 10px;
+    transform: translateY(0);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--blue-deep);
+    background: var(--paper);
+  }
+
+  .label {
+    @apply mb-1.5 block text-sm font-medium;
+    color: var(--color-text-secondary);
+  }
+
+  .helper {
+    @apply mt-1.5 text-sm;
+    color: var(--muted);
+  }
+
+  .fade-in {
+    animation: fadeIn 0.4s ease-out both;
+  }
+
+  .slide-up {
+    animation: slideUp 0.45s ease-out both;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes slideUp {
+    from {
+      opacity: 0;
+      transform: translateY(14px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .markdown-body {
+    color: var(--ink);
+  }
+
+  .markdown-body h1 {
+    @apply mb-4 mt-8 text-2xl;
+    font-family: var(--font-display);
+  }
+
+  .markdown-body h2 {
+    @apply mb-3 mt-6 text-xl;
+    font-family: var(--font-display);
+  }
+
+  .markdown-body h3 {
+    @apply mb-2 mt-5 text-lg font-semibold;
+  }
+
+  .markdown-body p {
+    @apply mb-3 leading-relaxed;
+  }
+
+  .markdown-body ul {
+    @apply mb-4 ml-6 list-disc space-y-1;
+  }
+
+  .markdown-body ol {
+    @apply mb-4 ml-6 list-decimal space-y-1;
+  }
+
+  .markdown-body code {
+    @apply rounded-lg px-1.5 py-0.5 text-sm;
+    background: var(--chip);
+    color: var(--blue-deep);
+    font-family: var(--font-mono);
+  }
+
+  .markdown-body blockquote {
+    @apply my-4 rounded-r-lg border-l-4 px-4 py-3;
+    border-left-color: var(--blue-deep);
+    background: var(--chip);
+  }
+}
