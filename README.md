@@ -1,13 +1,17 @@
 # Career Copilot — AI Career Pathfinder
 
-https://careerbuidsysytem-production.up.railway.app/#public
-<div align="center">
-
 **Персональный навигатор карьерного роста на основе AI**
 
-Анализ навыков · Gap-анализ · План развития 70/20/10
+Анализ навыков -> План карьерного развития -> Отслеживание прогресса
 
 </div>
+
+***Ссылка на приложение:*** https://careerbuidsysytem-production.up.railway.app/#public
+
+
+[https://github.com/user-attachments/assets/e9eef272-01f6-4498-a0ee-e8e7be993891](https://github.com/user-attachments/assets/87e988e8-8892-4c17-94b9-99c8b67e0032)
+
+
 
 ---
 
@@ -15,7 +19,6 @@ https://careerbuidsysytem-production.up.railway.app/#public
 
 Career Copilot — веб-приложение, которое помогает специалистам построить индивидуальный план карьерного развития. Система сопоставляет текущие навыки пользователя с требованиями целевой роли, определяет зоны роста и генерирует конкретные шаги по модели 70/20/10 (практика / менторство / обучение).
 
-***Ссылка на приложение:*** https://careerbuidsysytem-production.up.railway.app/#public
 
 ### Три сценария
 
